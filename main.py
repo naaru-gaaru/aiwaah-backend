@@ -17,22 +17,17 @@ from prompt import AIWAAH_SYSTEM_PROMPT
 
 load_dotenv()
 
+# OpenAI
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
+# Supabase (Identity Provider)
 SUPABASE_PROJECT_ID = os.getenv("SUPABASE_PROJECT_ID")
-SUPABASE_URL = f"https://{SUPABASE_PROJECT_ID}.supabase.co"
-SUPABASE_SERVICE_ROLE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
 
+# AIwaah CIAM (our own identity issuer)
 AIWAAH_JWT_SECRET = os.getenv("AIWAAH_JWT_SECRET")
 
-# OpenAI client (AiWaah's "brain")
+# OpenAI client (AiWaah brain)
 openai_client = OpenAI(api_key=OPENAI_API_KEY)
-
-# Supabase server-side client (used for memory storage)
-supabase = create_client(
-    SUPABASE_URL,
-    SUPABASE_SERVICE_ROLE_KEY
-)
 
 # =====================================================
 # 2️⃣ FASTAPI APP CONFIG
@@ -59,14 +54,14 @@ class Question(BaseModel):
 # 4️⃣ SUPABASE TOKEN VERIFICATION (GOOGLE → SUPABASE)
 # =====================================================
 
-# Supabase publishes public keys (JWKS) for verifying tokens
+# Supabase publishes public keys (JWKS) for verifying JWTs
 SUPABASE_JWKS_URL = (
     f"https://{SUPABASE_PROJECT_ID}.supabase.co/auth/v1/certs"
 )
 
 def verify_supabase_token(token: str):
     """
-    Verifies a Supabase-issued JWT (from Google SSO).
+    Verifies a Supabase-issued JWT (Google SSO).
     This proves the user authenticated with Supabase.
     """
     jwks = requests.get(SUPABASE_JWKS_URL).json()
@@ -90,8 +85,8 @@ def verify_supabase_token(token: str):
 @app.post("/ciam/exchange")
 def exchange_token(request: Request):
     """
-    Exchanges a Supabase token for an AiWaah-issued identity token.
-    This allows AiWaah to act as its own CIAM authority.
+    Exchanges a Supabase token for an AIwaah-issued identity token.
+    AIwaah becomes its own CIAM authority.
     """
     auth_header = request.headers.get("Authorization")
 
@@ -105,16 +100,16 @@ def exchange_token(request: Request):
     except Exception:
         raise HTTPException(status_code=401, detail="Invalid Supabase token")
 
-    # Build AiWaah identity claims
+    # Build AIwaah identity claims
     aiwaah_claims = {
-        "sub": supabase_user["sub"],               # Stable user ID
+        "sub": supabase_user["sub"],                 # Stable user ID
         "email": supabase_user.get("email"),
         "idp": supabase_user.get("app_metadata", {}).get("provider", "unknown"),
-        "roles": ["user"],                         # Future RBAC
-        "mfa": False,                              # Future MFA
+        "roles": ["user"],                           # Future RBAC
+        "mfa": False,                                # Future MFA
         "iss": "aiwaah.identity",
         "iat": int(time.time()),
-        "exp": int(time.time()) + 3600
+        "exp": int(time.time()) + 3600               # 1 hour expiry
     }
 
     aiwaah_token = jwt.encode(
@@ -126,37 +121,7 @@ def exchange_token(request: Request):
     return {"aiwaah_token": aiwaah_token}
 
 # =====================================================
-# 6️⃣ USER MEMORY HELPERS (IDENTITY-SCOPED)
-# =====================================================
-
-def fetch_user_memory(user_id: str, limit: int = 6):
-    """
-    Fetches the last N messages for a specific user.
-    Memory is strictly scoped by user_id (CIAM principle).
-    """
-    response = (
-        supabase.table("aiwaah_memory")
-        .select("role, content")
-        .eq("user_id", user_id)
-        .order("created_at", desc=False)
-        .limit(limit)
-        .execute()
-    )
-
-    return response.data or []
-
-def store_message(user_id: str, role: str, content: str):
-    """
-    Stores a single message in persistent memory.
-    """
-    supabase.table("aiwaah_memory").insert({
-        "user_id": user_id,
-        "role": role,
-        "content": content
-    }).execute()
-
-# =====================================================
-# 7️⃣ AIWAAH CHAT ENDPOINT (IDENTITY + MEMORY AWARE)
+# 6️⃣ AIWAAH CHAT ENDPOINT (IDENTITY-AWARE, NO MEMORY)
 # =====================================================
 
 @app.post("/aiwaah")
@@ -166,7 +131,7 @@ def ask_aiwaah(
 ):
     """
     Main chat endpoint.
-    Requires a valid AiWaah identity token.
+    Requires a valid AIwaah-issued identity token.
     """
 
     if not authorization or not authorization.startswith("Bearer "):
@@ -183,13 +148,8 @@ def ask_aiwaah(
     except Exception:
         raise HTTPException(status_code=401, detail="Invalid AIwaah token")
 
-    user_id = identity["sub"]
     user_email = identity.get("email")
 
-    # 1️⃣ Load past memory for this user
-    memory = fetch_user_memory(user_id)
-
-    # 2️⃣ Build prompt with memory
     messages = [
         {
             "role": "system",
@@ -197,24 +157,17 @@ def ask_aiwaah(
 {AIWAAH_SYSTEM_PROMPT}
 
 The authenticated user is {user_email}.
-Use prior context when relevant.
 """
         },
-        *memory,
-        {"role": "user", "content": q.message}
+        {
+            "role": "user",
+            "content": q.message
+        }
     ]
 
-    # 3️⃣ Call OpenAI
     response = openai_client.responses.create(
         model="gpt-4.1-mini",
         input=messages
     )
 
-    reply = response.output_text
-
-    # 4️⃣ Store conversation in memory
-    store_message(user_id, "user", q.message)
-    store_message(user_id, "assistant", reply)
-
-    return {"reply": reply}
-
+    return {"reply": response.output_text}
