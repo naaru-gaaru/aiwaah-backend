@@ -4,4 +4,3 @@ python-dotenv
 openai
 python-jose
 requests
-supabase-py
