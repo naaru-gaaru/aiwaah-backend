@@ -9,8 +9,6 @@ from dotenv import load_dotenv
 from openai import OpenAI
 from jose import jwt
 
-from supabase import create_client
-
 from prompt import AIWAAH_SYSTEM_PROMPT
 
 # =====================================================
@@ -219,3 +217,4 @@ Use prior context when relevant.
     store_message(user_id, "assistant", reply)
 
     return {"reply": reply}
+
