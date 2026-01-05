@@ -60,21 +60,26 @@ SUPABASE_JWKS_URL = (
 )
 
 def verify_supabase_token(token: str):
+    """
+    Verifies Supabase JWT issued after Google OAuth.
+    We verify signature + issuer, but do NOT hard-fail on audience.
+    """
     jwks = requests.get(SUPABASE_JWKS_URL).json()
     header = jwt.get_unverified_header(token)
 
-    key = next(k for k in jwks["keys"] if k["kid"] == header["kid"])
+    key = next(
+        k for k in jwks["keys"] if k["kid"] == header["kid"]
+    )
 
-    decoded = jwt.decode(
+    return jwt.decode(
         token,
         key,
         algorithms=["RS256"],
-        issuer=f"https://{SUPABASE_PROJECT_ID}.supabase.co/auth/v1",
-        options={"verify_aud": False},
+        options={
+            "verify_aud": False  # 🔑 THIS FIXES EVERYTHING
+        },
+        issuer=f"https://{SUPABASE_PROJECT_ID}.supabase.co/auth/v1"
     )
-
-    print("✅ Supabase token verified:", decoded)  # TEMP LOG
-    return decoded
 # =====================================================
 # 5️⃣ CIAM TOKEN EXCHANGE (SUPABASE → AIWAAH)
 # =====================================================
@@ -168,6 +173,7 @@ The authenticated user is {user_email}.
     )
 
     return {"reply": response.output_text}
+
 
 
 
