@@ -26,12 +26,12 @@ class Question(BaseModel):
 
 @app.post("/aiwaah")
 def ask_aiwaah(q: Question):
-    response = client.responses.create(
-        model="gpt-4.1-mini",
-        input=[
+    response = client.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=[
             {"role": "system", "content": AIWAAH_SYSTEM_PROMPT},
             {"role": "user", "content": q.message}
         ]
     )
 
-    return {"reply": response.output_text}
+    return {"reply": response.choices[0].message.content}
