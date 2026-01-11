@@ -24,6 +24,10 @@ app.add_middleware(
 class Question(BaseModel):
     message: str
 
+@app.get("/")
+def health_check():
+    return {"status": "AiWaah Backend is Alive! 🧞‍♂️", "model": "gpt-4o-mini"}
+
 @app.post("/aiwaah")
 def ask_aiwaah(q: Question):
     response = client.chat.completions.create(
