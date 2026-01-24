@@ -24,7 +24,7 @@ ALGORITHMS = ["RS256"]
 
 # --- Supabase Config (REST API) ---
 SUPABASE_URL = os.getenv("SUPABASE_URL")
-SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_KEY")
+SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
 SUPABASE_REST_URL = f"{SUPABASE_URL}/rest/v1/messages"
 SUPABASE_HEADERS = {
     "apikey": SUPABASE_KEY,
