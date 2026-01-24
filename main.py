@@ -82,24 +82,44 @@ from fastapi import Header
 @app.get("/history")
 def get_history(user: dict = Depends(get_current_user), x_user_id: str = Header(None)):
     user_id = user.get("sub")
-    # If auth failed (bypass) but we have a trusted frontend claiming a user ID
+    print(f"DEBUG: get_history called. user_id from token: {user_id}, x_user_id from header: {x_user_id}")
+    
     if user_id == "bypass-user" and x_user_id:
         user_id = x_user_id
+        print(f"DEBUG: Using fallback user_id: {user_id}")
         
     try:
-        # GET /messages?user_id=eq.{user_id}&order=created_at.asc
         url = f"{SUPABASE_REST_URL}?user_id=eq.{user_id}&order=created_at.asc"
+        print(f"DEBUG: Fetching history from: {url}")
         response = requests.get(url, headers=SUPABASE_HEADERS)
+        print(f"DEBUG: Supabase response status: {response.status_code}")
         return response.json()
     except Exception as e:
         print(f"Db Error: {e}")
         return []
+
+@app.get("/debug-db")
+def debug_db():
+    try:
+        print(f"DEBUG_DB: Testing connection to {SUPABASE_REST_URL}")
+        # Just try to select 1 row from messages
+        url = f"{SUPABASE_REST_URL}?limit=1"
+        response = requests.get(url, headers=SUPABASE_HEADERS)
+        return {
+            "status_code": response.status_code,
+            "response": response.json()[:100] if isinstance(response.json(), str) else response.json(),
+            "url_used": f"{SUPABASE_URL}/rest/v1/..." 
+        }
+    except Exception as e:
+        return {"error": str(e)}
 
 @app.post("/aiwaah")
 def ask_aiwaah(q: Question, user: dict = Depends(get_current_user), x_user_id: str = Header(None)):
     user_id = user.get("sub")
     if user_id == "bypass-user" and x_user_id:
         user_id = x_user_id
+    
+    print(f"DEBUG: ask_aiwaah saving for user: {user_id}")
     
     # 1. Save User Message
     try:
