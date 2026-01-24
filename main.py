@@ -10,6 +10,9 @@ import requests
 from cryptography.x509 import load_pem_x509_certificate
 from cryptography.hazmat.backends import default_backend
 
+# from supabase import create_client, Client  <-- removed to avoid build errors
+import requests
+import json
 from prompt import AIWAAH_SYSTEM_PROMPT
 
 load_dotenv()
@@ -18,6 +21,17 @@ load_dotenv()
 AUTH0_DOMAIN = "dev-vdi60zpk3pq4icvf.ca.auth0.com"
 API_AUDIENCE = "https://aiwaah-backend"
 ALGORITHMS = ["RS256"]
+
+# --- Supabase Config (REST API) ---
+SUPABASE_URL = os.getenv("SUPABASE_URL")
+SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_KEY")
+SUPABASE_REST_URL = f"{SUPABASE_URL}/rest/v1/messages"
+SUPABASE_HEADERS = {
+    "apikey": SUPABASE_KEY,
+    "Authorization": f"Bearer {SUPABASE_KEY}",
+    "Content-Type": "application/json",
+    "Prefer": "return=minimal"
+}
 
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 app = FastAPI()
@@ -46,7 +60,7 @@ def verify_jwt(token: str):
         )
         return payload
     except Exception as e:
-        print(f"⚠️ Auth Failed (Running in Bypass Mode): {e}")
+        print(f"Auth Failed (Running in Bypass Mode): {e}")
         # BYPASS MODE: Return a fake user so the chat still works!
         return {"sub": "bypass-user", "name": "Guest"}
 
@@ -61,11 +75,43 @@ class Question(BaseModel):
 
 @app.get("/")
 def health_check():
-    return {"status": "AiWaah Backend is Alive! 🧞‍♂️", "model": "gpt-4o-mini"}
+    return {"status": "AiWaah Backend is Alive!", "model": "gpt-4o-mini"}
+
+from fastapi import Header
+
+@app.get("/history")
+def get_history(user: dict = Depends(get_current_user), x_user_id: str = Header(None)):
+    user_id = user.get("sub")
+    # If auth failed (bypass) but we have a trusted frontend claiming a user ID
+    if user_id == "bypass-user" and x_user_id:
+        user_id = x_user_id
+        
+    try:
+        # GET /messages?user_id=eq.{user_id}&order=created_at.asc
+        url = f"{SUPABASE_REST_URL}?user_id=eq.{user_id}&order=created_at.asc"
+        response = requests.get(url, headers=SUPABASE_HEADERS)
+        return response.json()
+    except Exception as e:
+        print(f"Db Error: {e}")
+        return []
 
 @app.post("/aiwaah")
-def ask_aiwaah(q: Question, user: dict = Depends(get_current_user)):
-    # user dict contains claims (sub, etc.) if needed
+def ask_aiwaah(q: Question, user: dict = Depends(get_current_user), x_user_id: str = Header(None)):
+    user_id = user.get("sub")
+    if user_id == "bypass-user" and x_user_id:
+        user_id = x_user_id
+    
+    # 1. Save User Message
+    try:
+        requests.post(
+            SUPABASE_REST_URL, 
+            headers=SUPABASE_HEADERS, 
+            json={"user_id": user_id, "role": "user", "content": q.message}
+        )
+    except Exception as e:
+        print(f"DB Error (User): {e}")
+
+    # 2. Get AI Response
     response = client.chat.completions.create(
         model="gpt-4o-mini",
         messages=[
@@ -73,5 +119,16 @@ def ask_aiwaah(q: Question, user: dict = Depends(get_current_user)):
             {"role": "user", "content": q.message}
         ]
     )
+    ai_text = response.choices[0].message.content
 
-    return {"reply": response.choices[0].message.content}
+    # 3. Save AI Message
+    try:
+        requests.post(
+            SUPABASE_REST_URL, 
+            headers=SUPABASE_HEADERS, 
+            json={"user_id": user_id, "role": "ai", "content": ai_text}
+        )
+    except Exception as e:
+        print(f"DB Error (AI): {e}")
+
+    return {"reply": ai_text}
