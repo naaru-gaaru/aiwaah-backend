@@ -101,14 +101,16 @@ def get_history(user: dict = Depends(get_current_user), x_user_id: str = Header(
 @app.get("/debug-db")
 def debug_db():
     try:
-        print(f"DEBUG_DB: Testing connection to {SUPABASE_REST_URL}")
-        # Just try to select 1 row from messages
-        url = f"{SUPABASE_REST_URL}?limit=1"
-        response = requests.get(url, headers=SUPABASE_HEADERS)
+        # Check total count
+        count_response = requests.get(f"{SUPABASE_REST_URL}?select=count", headers=SUPABASE_HEADERS)
+        
+        # Check recent messages (all users)
+        recent_response = requests.get(f"{SUPABASE_REST_URL}?limit=5&order=created_at.desc", headers=SUPABASE_HEADERS)
+        
         return {
-            "status_code": response.status_code,
-            "response": response.json()[:100] if isinstance(response.json(), str) else response.json(),
-            "url_used": f"{SUPABASE_URL}/rest/v1/..." 
+            "total_count": count_response.json(),
+            "recent_samples": recent_response.json(),
+            "env_status": "Keys present" if SUPABASE_KEY and SUPABASE_URL else "Keys missing"
         }
     except Exception as e:
         return {"error": str(e)}
