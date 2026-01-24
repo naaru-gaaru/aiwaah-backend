@@ -82,38 +82,16 @@ from fastapi import Header
 @app.get("/history")
 def get_history(user: dict = Depends(get_current_user), x_user_id: str = Header(None)):
     user_id = user.get("sub")
-    print(f"DEBUG: get_history called. user_id from token: {user_id}, x_user_id from header: {x_user_id}")
-    
     if user_id == "bypass-user" and x_user_id:
         user_id = x_user_id
-        print(f"DEBUG: Using fallback user_id: {user_id}")
         
     try:
         url = f"{SUPABASE_REST_URL}?user_id=eq.{user_id}&order=created_at.asc"
-        print(f"DEBUG: Fetching history from: {url}")
         response = requests.get(url, headers=SUPABASE_HEADERS)
-        print(f"DEBUG: Supabase response status: {response.status_code}")
         return response.json()
     except Exception as e:
-        print(f"Db Error: {e}")
+        print(f"Error fetching history: {e}")
         return []
-
-@app.get("/debug-db")
-def debug_db():
-    try:
-        # Check total count
-        count_response = requests.get(f"{SUPABASE_REST_URL}?select=count", headers=SUPABASE_HEADERS)
-        
-        # Check recent messages (all users)
-        recent_response = requests.get(f"{SUPABASE_REST_URL}?limit=5&order=created_at.desc", headers=SUPABASE_HEADERS)
-        
-        return {
-            "total_count": count_response.json(),
-            "recent_samples": recent_response.json(),
-            "env_status": "Keys present" if SUPABASE_KEY and SUPABASE_URL else "Keys missing"
-        }
-    except Exception as e:
-        return {"error": str(e)}
 
 @app.post("/aiwaah")
 def ask_aiwaah(q: Question, user: dict = Depends(get_current_user), x_user_id: str = Header(None)):
@@ -121,9 +99,21 @@ def ask_aiwaah(q: Question, user: dict = Depends(get_current_user), x_user_id: s
     if user_id == "bypass-user" and x_user_id:
         user_id = x_user_id
     
-    print(f"DEBUG: ask_aiwaah saving for user: {user_id}")
-    
-    # 1. Save User Message
+    # 1. Fetch History for Context (Last 10 messages)
+    history_context = []
+    try:
+        history_url = f"{SUPABASE_REST_URL}?user_id=eq.{user_id}&order=created_at.desc&limit=10"
+        hist_res = requests.get(history_url, headers=SUPABASE_HEADERS)
+        if hist_res.status_code == 200:
+            raw_history = hist_res.json()
+            # Reverse to get chronological order for OpenAI
+            for msg in reversed(raw_history):
+                role = "user" if msg["role"] == "user" else "assistant"
+                history_context.append({"role": role, "content": msg["content"]})
+    except Exception as e:
+        print(f"Context Error: {e}")
+
+    # 2. Save User Message to DB
     try:
         requests.post(
             SUPABASE_REST_URL, 
@@ -133,17 +123,19 @@ def ask_aiwaah(q: Question, user: dict = Depends(get_current_user), x_user_id: s
     except Exception as e:
         print(f"DB Error (User): {e}")
 
-    # 2. Get AI Response
+    # 3. Assemble full prompt with context
+    messages = [{"role": "system", "content": AIWAAH_SYSTEM_PROMPT}]
+    messages.extend(history_context)
+    messages.append({"role": "user", "content": q.message})
+
+    # 4. Get AI Response
     response = client.chat.completions.create(
         model="gpt-4o-mini",
-        messages=[
-            {"role": "system", "content": AIWAAH_SYSTEM_PROMPT},
-            {"role": "user", "content": q.message}
-        ]
+        messages=messages
     )
     ai_text = response.choices[0].message.content
 
-    # 3. Save AI Message
+    # 5. Save AI Message to DB
     try:
         requests.post(
             SUPABASE_REST_URL, 
